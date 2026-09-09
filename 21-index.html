@@ -1,0 +1,481 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1"/>
+<title>Atlas: one photo, one world</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Source+Serif+4:ital,opsz,wght@0,8..60,400;0,8..60,600;1,8..60,400&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+  :root{ --ink:#16181d; --muted:#6a6f7a; --line:#e3e4e8; --accent:#0f7b5f; }
+  *{box-sizing:border-box}
+  body{margin:0;background:#fbfaf8;color:var(--ink);font-family:'Source Serif 4',Georgia,serif;line-height:1.55}
+  .page{max-width:760px;margin:0 auto;padding:2.5rem 1.25rem 4rem}
+  header{text-align:center;margin-bottom:1.5rem}
+  h1{font-size:2.1rem;margin:0 0 .4rem;font-weight:normal;letter-spacing:.01em}
+  .subtitle{font-size:1.05rem;color:var(--muted);margin:0 0 .8rem;font-style:italic}
+  .authors{font-size:.9rem;color:var(--muted);margin:0}
+  h2{font-size:1.15rem;margin:2.2rem 0 .6rem;border-bottom:1px solid var(--line);padding-bottom:.3rem;font-weight:normal;letter-spacing:.02em}
+  #stage{
+    position:relative;width:100%;height:min(72vh,560px);min-height:380px;
+    border:1px solid var(--line);border-radius:6px;overflow:hidden;background:#101318;
+  }
+  #view{width:100%;height:100%;display:block;touch-action:none;cursor:grab}
+  #view:active{cursor:grabbing}
+  #dropzone{
+    position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;
+    gap:.9rem;background:rgba(12,14,19,.88);color:#cfd4de;text-align:center;padding:1rem;z-index:5;
+  }
+  #dropzone p{margin:0;font-size:1rem}
+  #dropzone .small{font-size:.78rem;color:#8b93a5;font-family:'IBM Plex Mono',ui-monospace,monospace}
+  .btnrow{display:flex;gap:.6rem;flex-wrap:wrap;justify-content:center}
+  .btn{
+    padding:.6rem 1.1rem;font-size:.9rem;border:0;border-radius:4px;cursor:pointer;
+    background:var(--accent);color:#fff;font-family:inherit;
+  }
+  .btn.ghost{background:transparent;border:1px solid rgba(255,255,255,.3);color:#cfd4de}
+  .btn:active{transform:translateY(1px)}
+  #palette{
+    position:absolute;left:.7rem;bottom:.7rem;display:flex;gap:.3rem;z-index:4;pointer-events:none;
+  }
+  .sw{width:22px;height:22px;border-radius:4px;border:1px solid rgba(255,255,255,.35)}
+  #stats{
+    position:absolute;top:.6rem;left:.7rem;font-size:.72rem;color:#9fb0cc;z-index:4;pointer-events:none;
+    font-family:'IBM Plex Mono',ui-monospace,monospace;text-shadow:0 1px 2px rgba(0,0,0,.6);white-space:pre-line;
+  }
+  #help{
+    position:absolute;bottom:.7rem;right:.7rem;font-size:.7rem;color:#8b93a5;z-index:4;pointer-events:none;
+    font-family:'IBM Plex Mono',ui-monospace,monospace;text-shadow:0 1px 2px rgba(0,0,0,.6);
+  }
+  #newphoto{position:absolute;top:.6rem;right:.7rem;z-index:4;display:none}
+  .meth li{margin:.45rem 0}
+  footer{margin-top:3rem;padding-top:1rem;border-top:1px solid var(--line);font-size:.8rem;color:var(--muted);text-align:center}
+  @media (max-width:560px){ h1{font-size:1.6rem} #stage{height:62vh} }
+</style>
+<script type="importmap">
+{"imports":{"three":"https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js"}}
+</script>
+</head>
+<body>
+<div class="page">
+  <header>
+    <h1>Atlas</h1>
+    <p class="subtitle">Single-image world reconstruction: one photograph in, one inhabitable diorama out</p>
+    <p class="authors">J. Garcia<sup>1</sup> &nbsp; <span style="font-size:.85rem;color:var(--muted)"><sup>1</sup>Institute of General Acceleration, Chicago</span></p>
+  </header>
+
+  <section>
+    <h2>Abstract</h2>
+    <p>Atlas lifts a complete three-dimensional world out of a single 2D photograph. The system reads
+    the image's palette, luminance field, and texture statistics, then grows terrain, water, and
+    structures in the photograph's own colors. Every reconstruction is unique to its source image and
+    fully deterministic: the same photo always grows the same world. Runs entirely on device.</p>
+  </section>
+
+  <section>
+    <h2>Interactive demo</h2>
+    <div id="stage">
+      <canvas id="view"></canvas>
+      <div id="dropzone">
+        <p>Drop a photo to grow its world</p>
+        <div class="btnrow">
+          <button class="btn" id="pick">Choose a photo</button>
+          <button class="btn ghost" id="sample">No photo handy? Grow a sample world</button>
+        </div>
+        <p class="small">the image never leaves your device</p>
+      </div>
+      <input type="file" id="file" accept="image/*" style="display:none"/>
+      <div id="stats"></div>
+      <div id="palette"></div>
+      <button class="btn" id="newphoto">New photo</button>
+      <div id="help"></div>
+    </div>
+  </section>
+
+  <section>
+    <h2>Method</h2>
+    <ol class="meth">
+      <li><b>Palette extraction.</b> The photograph is quantized to a small set of representative
+      colors that become the world's entire material library.</li>
+      <li><b>Elevation from luminance.</b> Bright regions rise, dark regions sink; the image's light
+      field becomes terrain relief on a circular diorama base.</li>
+      <li><b>Procedural growth.</b> Structures sprout where the image is most saturated or detailed,
+      colored by their nearest palette entry, and the world animates into place.</li>
+    </ol>
+  </section>
+
+  <section>
+    <h2>Limitations</h2>
+    <p>Atlas reconstructs the world the photograph <i>implies</i>, not the world it captured. A photo
+    of your lunch becomes a landscape in lunch colors. The model considers this a feature.</p>
+  </section>
+
+  <footer>Atlas &middot; one photo, one world &middot; 2026</footer>
+</div>
+
+<script type="module">
+import * as THREE from 'three';
+
+const canvas = document.getElementById('view');
+const stage  = document.getElementById('stage');
+const statsEl = document.getElementById('stats');
+const palEl = document.getElementById('palette');
+const dropEl = document.getElementById('dropzone');
+const newBtn = document.getElementById('newphoto');
+const helpEl = document.getElementById('help');
+
+const renderer = new THREE.WebGLRenderer({canvas, antialias:true});
+renderer.setPixelRatio(Math.min(devicePixelRatio,2));
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x101318);
+const camera = new THREE.PerspectiveCamera(55, 1, 0.1, 500);
+
+function resize(){
+  const w=stage.clientWidth, h=stage.clientHeight;
+  renderer.setSize(w,h,false);
+  camera.aspect=w/h; camera.updateProjectionMatrix();
+}
+new ResizeObserver(resize).observe(stage);
+resize();
+
+scene.add(new THREE.HemisphereLight(0xdfe8f2, 0x2a2620, 0.9));
+const sun = new THREE.DirectionalLight(0xfff2e0, 1.6);
+sun.position.set(40,70,25);
+scene.add(sun);
+
+/* ---------- orbit controls (mouse + touch) ---------- */
+let az = 0.8, pol = 0.95, dist = 46, autoSpin = true;
+const target = new THREE.Vector3(0,2,0);
+const pointers = new Map();
+canvas.addEventListener('pointerdown', e=>{
+  canvas.setPointerCapture(e.pointerId);
+  pointers.set(e.pointerId,{x:e.clientX,y:e.clientY});
+  autoSpin=false;
+});
+canvas.addEventListener('pointermove', e=>{
+  const pt=pointers.get(e.pointerId); if(!pt) return;
+  if(pointers.size===1){
+    az -= (e.clientX-pt.x)*0.006;
+    pol -= (e.clientY-pt.y)*0.006;
+    pol = THREE.MathUtils.clamp(pol, 0.15, 1.45);
+  }
+  pt.x=e.clientX; pt.y=e.clientY;
+  if(pointers.size===2){
+    const [a,b]=[...pointers.values()];
+    const d=Math.hypot(a.x-b.x, a.y-b.y);
+    if(pt.prevD) dist = THREE.MathUtils.clamp(dist*pt.prevD/d, 16, 120);
+    pointers.forEach(p=>p.prevD=d);
+  }
+});
+const drop=e=>{ pointers.delete(e.pointerId); pointers.forEach(p=>delete p.prevD); };
+canvas.addEventListener('pointerup',drop);
+canvas.addEventListener('pointercancel',drop);
+canvas.addEventListener('wheel', e=>{
+  e.preventDefault();
+  dist = THREE.MathUtils.clamp(dist*(1+e.deltaY*0.001), 16, 120);
+  autoSpin=false;
+},{passive:false});
+
+/* ---------- world lifecycle ---------- */
+let world=null, birth=0, growing=false;
+function disposeWorld(){
+  if(!world) return;
+  world.traverse(o=>{
+    if(o.geometry) o.geometry.dispose();
+    if(o.material){ (Array.isArray(o.material)?o.material:[o.material]).forEach(m=>m.dispose()); }
+  });
+  scene.remove(world); world=null;
+}
+
+/* ---------- image analysis ---------- */
+function hashStr(s){
+  let h=2166136261;
+  for(let i=0;i<s.length;i++){ h^=s.charCodeAt(i); h=Math.imul(h,16777619); }
+  return h>>>0;
+}
+function mulberry32(a){
+  return function(){
+    let t=a+=0x6D2B79F5;
+    t=Math.imul(t^(t>>>15),t|1);
+    t^=t+Math.imul(t^(t>>>7),t|61);
+    return ((t^(t>>>14))>>>0)/4294967296;
+  };
+}
+
+function analyze(img){
+  const S=96;
+  const cv=document.createElement('canvas');
+  cv.width=S; cv.height=S;
+  const ctx=cv.getContext('2d',{willReadFrequently:true});
+  // cover-fit the image into the square
+  const iw=img.naturalWidth||img.width, ih=img.naturalHeight||img.height;
+  const sc=Math.max(S/iw, S/ih);
+  const dw=iw*sc, dh=ih*sc;
+  ctx.drawImage(img,(S-dw)/2,(S-dh)/2,dw,dh);
+  const data=ctx.getImageData(0,0,S,S).data;
+
+  // palette buckets: 4 bits per channel
+  const buckets=new Map();
+  const lum=new Float32Array(S*S), sat=new Float32Array(S*S);
+  const pix=[];
+  for(let i=0;i<S*S;i++){
+    const r=data[i*4],g=data[i*4+1],b=data[i*4+2];
+    pix.push([r,g,b]);
+    const key=((r>>4)<<8)|((g>>4)<<4)|(b>>4);
+    let bk=buckets.get(key);
+    if(!bk){ bk={n:0,r:0,g:0,b:0}; buckets.set(key,bk); }
+    bk.n++; bk.r+=r; bk.g+=g; bk.b+=b;
+    const mx=Math.max(r,g,b), mn=Math.min(r,g,b);
+    lum[i]=(0.2126*r+0.7152*g+0.0722*b)/255;
+    sat[i]=mx===0?0:(mx-mn)/mx;
+  }
+  const palette=[...buckets.values()]
+    .sort((a,b)=>b.n-a.n).slice(0,8)
+    .map(bk=>new THREE.Color(bk.r/bk.n/255, bk.g/bk.n/255, bk.b/bk.n/255));
+
+  // blurred luminance for smooth terrain
+  const blur=new Float32Array(S*S);
+  for(let y=0;y<S;y++)for(let x=0;x<S;x++){
+    let s=0,n=0;
+    for(let dy=-2;dy<=2;dy++)for(let dx=-2;dx<=2;dx++){
+      const xx=x+dx, yy=y+dy;
+      if(xx<0||yy<0||xx>=S||yy>=S) continue;
+      s+=lum[yy*S+xx]; n++;
+    }
+    blur[y*S+x]=s/n;
+  }
+  // edge/detail map for structure placement
+  const detail=new Float32Array(S*S);
+  for(let y=1;y<S-1;y++)for(let x=1;x<S-1;x++){
+    const i=y*S+x;
+    detail[i]=Math.abs(lum[i]-lum[i-1])+Math.abs(lum[i]-lum[i+1])+Math.abs(lum[i]-lum[i-S])+Math.abs(lum[i]-lum[i+S])+sat[i]*0.5;
+  }
+  return {S, pix, palette, height:blur, sat, detail};
+}
+
+function nearestPalette(palette, r,g,b){
+  let best=0, bd=1e9;
+  for(let i=0;i<palette.length;i++){
+    const p=palette[i];
+    const d=(p.r*255-r)**2+(p.g*255-g)**2+(p.b*255-b)**2;
+    if(d<bd){bd=d;best=i;}
+  }
+  return best;
+}
+
+function buildFromImage(img, label){
+  disposeWorld();
+  const t0=performance.now();
+  const A=analyze(img);
+  const rand=mulberry32(hashStr(label+'|'+A.palette.map(c=>c.getHexString()).join(',')));
+  const S=A.S, R=15;                    // diorama radius
+  const GRID=96, SZ=R*2;
+  world=new THREE.Group();
+  scene.add(world);
+
+  const sample=(u,v,arr)=>{
+    const x=Math.min(S-1,Math.max(0,Math.round(u*(S-1))));
+    const y=Math.min(S-1,Math.max(0,Math.round(v*(S-1))));
+    return arr[y*S+x];
+  };
+  const pxAt=(u,v)=>{
+    const x=Math.min(S-1,Math.max(0,Math.round(u*(S-1))));
+    const y=Math.min(S-1,Math.max(0,Math.round(v*(S-1))));
+    return A.pix[y*S+x];
+  };
+  const hAt=(u,v)=> sample(u,v,A.height)*7;
+
+  /* terrain disc */
+  const geo=new THREE.PlaneGeometry(SZ,SZ,GRID,GRID);
+  geo.rotateX(-Math.PI/2);
+  const pos=geo.attributes.position;
+  const cols=new Float32Array(pos.count*3);
+  const c=new THREE.Color();
+  for(let i=0;i<pos.count;i++){
+    let x=pos.getX(i), z=pos.getZ(i);
+    const rr=Math.hypot(x,z);
+    let skirt=false;
+    if(rr>R*0.985){ const k=R*0.985/rr; x*=k; z*=k; skirt=true; }
+    const u=(x+R)/SZ, v=(z+R)/SZ;
+    let h=skirt ? -1.15 : hAt(u,v);
+    pos.setXYZ(i,x,h,z);
+    const [pr,pg,pb]=pxAt(u,v);
+    c.setRGB(pr/255,pg/255,pb/255);
+    // pull slightly toward nearest palette color for cohesion
+    const pi=nearestPalette(A.palette,pr,pg,pb);
+    c.lerp(A.palette[pi],0.35);
+    cols[i*3]=c.r; cols[i*3+1]=c.g; cols[i*3+2]=c.b;
+  }
+  geo.setAttribute('color', new THREE.BufferAttribute(cols,3));
+  geo.computeVertexNormals();
+  const terrain=new THREE.Mesh(geo,new THREE.MeshLambertMaterial({vertexColors:true}));
+  terrain.userData.grow=true;
+  world.add(terrain);
+
+  /* pedestal */
+  const ped=new THREE.Mesh(
+    new THREE.CylinderGeometry(R+1.2,R+2.2,2.6,48),
+    new THREE.MeshLambertMaterial({color:0x2a2d33})
+  );
+  ped.position.y=-1.3;
+  world.add(ped);
+
+  /* water: if a strongly blue/cool palette entry exists, flood low areas */
+  let waterAdded=false;
+  const blueish=A.palette.find(p=>p.b>p.r+0.08 && p.b>p.g+0.02);
+  if(blueish){
+    const wl=hAt(0.5,0.5)*0.35+0.7;
+    const w=new THREE.Mesh(
+      new THREE.CircleGeometry(R*0.985,48),
+      new THREE.MeshLambertMaterial({color:blueish,transparent:true,opacity:0.85})
+    );
+    w.rotation.x=-Math.PI/2; w.position.y=wl;
+    w.userData.rise=wl;
+    world.add(w); waterAdded=true;
+  }
+
+  /* structures: grow where the image is detailed/saturated */
+  const N=260;
+  const boxG=new THREE.BoxGeometry(1,1,1); boxG.translate(0,0.5,0);
+  const boxes=new THREE.InstancedMesh(boxG,new THREE.MeshLambertMaterial({color:0xffffff}),N);
+  const coneG=new THREE.ConeGeometry(0.7,2.2,6); coneG.translate(0,1.1,0);
+  const cones=new THREE.InstancedMesh(coneG,new THREE.MeshLambertMaterial({color:0xffffff}),N);
+  const m=new THREE.Matrix4(), q=new THREE.Quaternion(), sv=new THREE.Vector3(), pv=new THREE.Vector3();
+  let bi=0, ci=0, guard=0;
+  const births=[];
+  while(bi+ci<N && guard++<N*60){
+    const u=rand(), v=rand();
+    const x=(u*2-1)*R*0.94, z=(v*2-1)*R*0.94;
+    if(Math.hypot(x,z)>R*0.92) continue;
+    const d=sample(u,v,A.detail);
+    if(d<0.16 && rand()>0.12) continue;
+    const [pr,pg,pb]=pxAt(u,v);
+    const pi=nearestPalette(A.palette,pr,pg,pb);
+    const h=hAt(u,v);
+    const tall=sample(u,v,A.sat)<0.35 && rand()<0.6; // desaturated areas get towers, colorful get trees
+    const sc=0.5+rand()*1.1;
+    pv.set(x,h,z);
+    q.setFromAxisAngle(new THREE.Vector3(0,1,0),rand()*Math.PI*2);
+    if(tall){
+      sv.set(0.8*sc,(1.5+rand()*3.5)*sc,0.8*sc);
+      m.compose(pv,q,sv); boxes.setMatrixAt(bi,m);
+      boxes.setColorAt(bi,A.palette[pi]);
+      births.push(0.25+rand()*0.55); bi++;
+    } else {
+      sv.set(sc,sc,sc);
+      m.compose(pv,q,sv); cones.setMatrixAt(ci,m);
+      cones.setColorAt(ci,A.palette[pi]);
+      births.push(0.25+rand()*0.55); ci++;
+    }
+  }
+  boxes.count=bi; cones.count=ci;
+  boxes.userData.growLate=true; cones.userData.growLate=true;
+  world.add(boxes); world.add(cones);
+
+  statsEl.textContent =
+    'source: '+label+'\npalette: '+A.palette.length+' colors · grid '+GRID+'\u00d7'+GRID+
+    '\nstructures: '+(bi+ci)+' · water: '+(waterAdded?'yes':'no')+
+    '\nreconstruction '+(performance.now()-t0).toFixed(0)+' ms';
+
+  palEl.innerHTML='';
+  for(const p of A.palette){
+    const d=document.createElement('div');
+    d.className='sw'; d.style.background='#'+p.getHexString();
+    palEl.appendChild(d);
+  }
+
+  birth=performance.now(); growing=true;
+  autoSpin=true; az=0.8; pol=0.95; dist=46;
+  dropEl.style.display='none';
+  newBtn.style.display='block';
+}
+
+/* ---------- growth animation + render loop ---------- */
+function growScale(t){ // 0..1 eased
+  t=THREE.MathUtils.clamp(t,0,1);
+  return 1-Math.pow(1-t,3);
+}
+const clock=new THREE.Clock();
+function tick(){
+  requestAnimationFrame(tick);
+  const dt=Math.min(clock.getDelta(),0.05);
+  if(autoSpin) az+=dt*0.25;
+  const el=(performance.now()-birth)/1000;
+  if(world){
+    world.traverse(o=>{
+      if(o.userData.grow){
+        const s=growScale(el/1.4);
+        o.scale.set(s, growScale(el/1.8), s);
+      } else if(o.userData.growLate){
+        const s=growScale((el-0.5)/1.6);
+        o.scale.setScalar(Math.max(s,0.0001));
+      } else if(o.userData.rise!==undefined){
+        o.position.y=o.userData.rise*growScale(el/1.6);
+      }
+    });
+  }
+  camera.position.set(
+    target.x + dist*Math.sin(pol)*Math.sin(az),
+    target.y + dist*Math.cos(pol),
+    target.z + dist*Math.sin(pol)*Math.cos(az)
+  );
+  camera.lookAt(target);
+  renderer.render(scene,camera);
+}
+tick();
+
+/* ---------- input handling ---------- */
+const fileEl=document.getElementById('file');
+document.getElementById('pick').onclick=()=>fileEl.click();
+newBtn.onclick=()=>fileEl.click();
+fileEl.addEventListener('change',()=>{
+  if(fileEl.files && fileEl.files[0]) loadFile(fileEl.files[0]);
+  fileEl.value='';
+});
+stage.addEventListener('dragover',e=>{e.preventDefault();});
+stage.addEventListener('drop',e=>{
+  e.preventDefault();
+  if(e.dataTransfer.files && e.dataTransfer.files[0]) loadFile(e.dataTransfer.files[0]);
+});
+function loadFile(file){
+  const url=URL.createObjectURL(file);
+  const img=new Image();
+  img.onload=()=>{ buildFromImage(img, file.name.length>26?file.name.slice(0,23)+'...':file.name); URL.revokeObjectURL(url); };
+  img.src=url;
+}
+
+/* synthetic sample image so the demo works with no photo */
+document.getElementById('sample').onclick=()=>{
+  const cv=document.createElement('canvas');
+  cv.width=256; cv.height=256;
+  const ctx=cv.getContext('2d');
+  const g=ctx.createLinearGradient(0,0,0,256);
+  g.addColorStop(0,'#f7b267'); g.addColorStop(0.45,'#f4845f');
+  g.addColorStop(0.62,'#7fb069'); g.addColorStop(1,'#31572c');
+  ctx.fillStyle=g; ctx.fillRect(0,0,256,256);
+  // sun
+  ctx.fillStyle='#fff3d6'; ctx.beginPath(); ctx.arc(178,64,22,0,7); ctx.fill();
+  // mountains
+  ctx.fillStyle='#5d6c5d';
+  ctx.beginPath(); ctx.moveTo(0,150); ctx.lineTo(60,80); ctx.lineTo(120,150); ctx.closePath(); ctx.fill();
+  ctx.fillStyle='#48594a';
+  ctx.beginPath(); ctx.moveTo(80,150); ctx.lineTo(150,60); ctx.lineTo(230,150); ctx.closePath(); ctx.fill();
+  // lake
+  ctx.fillStyle='#3a7ca5'; ctx.fillRect(0,190,256,66);
+  ctx.fillStyle='rgba(255,255,255,.25)'; ctx.fillRect(30,205,90,4); ctx.fillRect(150,225,70,3);
+  // trees
+  for(let i=0;i<14;i++){
+    const x=8+i*18, h=14+((i*37)%17);
+    ctx.fillStyle='#2d4a22';
+    ctx.beginPath(); ctx.moveTo(x,190-h); ctx.lineTo(x-7,190); ctx.lineTo(x+7,190); ctx.closePath(); ctx.fill();
+  }
+  buildFromImage(cv, 'sample-sunset.png');
+};
+
+helpEl.textContent = matchMedia('(pointer: coarse)').matches
+  ? 'drag: orbit · pinch: zoom'
+  : 'drag: orbit · scroll: zoom';
+</script>
+</body>
+</html>
